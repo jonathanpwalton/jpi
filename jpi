@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+
+import re, requests, json, shutil
+from sys import argv, exit
+from datetime import datetime
+from hashlib import sha256
+from pathlib import Path
+from struct import pack
+from math import floor, ceil
+
+def run():
+    argv.pop(0)
+
+    if not(len(argv)):
+        err('expected a command, either define or compile')
+    
+    match argv.pop(0):
+        case 'define':
+            return define()
+        case 'compile':
+            return compile()
+        case c:
+            err(f'unknown command {c}, expected either define or compile')
+
+def define():
+    if len(argv) != 0:
+        err('this command takes no arguments')
+
+    def get_name(prompt):
+        f = r'[a-zA-Z0-9_\.]+[a-zA-Z0-9_\.-]*'
+        n = input(prompt)
+        while not re.fullmatch(f, n):
+            print(f'name {repr(n)} does not match format {repr(f)}, try again')
+            n = input(prompt)
+        return n
+
+    def get_date(prompt):
+        ifmt = '%Y-%m-%d'
+        ofmt = '%Y%m%d'
+        date = input(prompt)
+        while True:
+            try:
+                return datetime.strftime(datetime.strptime(date, ifmt), ofmt)
+            except ValueError as e:
+                print(f'{e}, try again')
+                date = input(prompt)
+
+    def get_commands(prompt):
+        print(prompt)
+        commands = []
+        while True:
+            command = input().strip()
+            if not len(command):
+                break
+            commands.append(command)
+        return commands
+
+    def get_source(prompt):
+        url = input(prompt)
+        while True:
+            try:
+                with requests.get(url) as res:
+                    res.raise_for_status()
+                    return {
+                        'url': url,
+                        'sha256': sha256(res.content).hexdigest(),
+                        'size': len(res.content),
+                    }
+            except BaseException as e:
+                print(f'{e}, try again')
+                url = input(prompt)
+
+    package = get_name('1. Package Name ')
+    version = get_name('2. Version Name ')
+    release = get_date('3. Release Date ')
+    source  = get_source('4. Source URL   ')
+    install = get_commands('5. Installation ')
+
+    edit = input('Anything to edit? [1-5] ').strip()
+    while True:
+        if not len(edit):
+            break
+        try:
+            edit = int(edit)
+            if 4 > edit < 0:
+                raise ValueError()
+            match edit:
+                case 1: package = get_name('1. Package Name ')
+                case 2: version = get_name('2. Version Name ')
+                case 3: release = get_date('3. Release Date ')
+                case 4: source  = get_source('4. Source URL   ')
+                case 5: install = get_commands('5. Installation ')
+            raise ValueError()
+        except ValueError as e:
+            edit = input('Anything to edit? [1-5] ')
+
+    output = Path(f'{package}_{version}_recipe.json')
+    if output.exists():
+        replace = input(f'Output path {output} exists, do you want to continue and overwrite? (any input is no) ')
+        if len(replace):
+            print('Not overwriting... exiting now')
+            exit(0)
+        shutil.rmtree(output)
+    
+    open(output, "w").write(json.dumps({
+        'package': package,
+        'version': version,
+        'release': int(release),
+        'source': source,
+        'install': ' && '.join(install)
+    }, indent = 4))
+    print(f'Recipe written to {output}')
+
+def compile():
+    if len(argv) != 0:
+        err('this command takes no arguments')
+
+    packages = {}
+    for path in Path('.').rglob('*_recipe.json'):
+        recipe = json.load(open(path, "r"))
+        package = str(recipe['package'])
+        version = str(recipe['version'])
+        if package not in packages:
+            packages[package] = {}
+        if version in packages[package]:
+            raise ValueError(f'duplicate version {version} found for {package}')
+        packages[package][version] = recipe
+
+    for package in packages: packages[package] = sorted(
+        list(packages[package].values()),
+        key = lambda r: r['release'],
+        reverse = True
+    )
+
+    def encode(s):
+        b = s.encode('ascii') + b'\0'
+        padding = (int(ceil(len(b) / 8) * 8) - len(b)) * b'\0'
+        return b + padding
+    
+    db = encode('JPW') # magic
+    db += pack('<Q', len(packages)) # package count
+
+    for package in packages:
+        db += encode(package) # package name
+        db += pack('<Q', len(packages[package])) # recipe count
+
+        for recipe in packages[package]:
+            db += encode(recipe['version'])
+            db += pack('<Q', int(recipe['release']))
+            db += encode(recipe['source']['url'])
+            db += encode(recipe['source']['sha256'])
+            db += pack('<Q', recipe['source']['size'])
+            db += encode(recipe['install'])
+
+    output = Path('recipes.jpw')
+    if output.exists():
+        replace = input(f'Output path {output} exists, do you want to continue and overwrite? (any input is no) ')
+        if len(replace):
+            print('Not overwriting... exiting now')
+            exit(0)
+        shutil.rmtree(output) if output.is_dir() else output.unlink()
+
+    open(output, "wb").write(db)
+    print(f'Database written to {output}')
+
+def err(msg):
+    print(f'error: {msg}')
+    exit(1)
+
+if __name__ == '__main__':
+    run()
