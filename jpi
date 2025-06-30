@@ -27,7 +27,7 @@ def define():
         err('this command takes no arguments')
 
     def get_name(prompt):
-        f = r'[a-zA-Z0-9_\.]+[a-zA-Z0-9_\.-]*'
+        f = r'[a-zA-Z0-9_\.][a-zA-Z0-9_\.-]{0,30}'
         n = input(prompt)
         while not re.fullmatch(f, n):
             print(f'name {repr(n)} does not match format {repr(f)}, try again')
@@ -46,19 +46,27 @@ def define():
                 date = input(prompt)
 
     def get_commands(prompt):
-        print(prompt)
-        commands = []
         while True:
-            command = input().strip()
-            if not len(command):
-                break
-            commands.append(command)
-        return commands
+            print(prompt)
+            commands = ''
+            while True:
+                command = input().strip()
+                if not len(command):
+                    break
+                commands += ' && ' + command if len(commands) else command
+            if len(commands) >= 512:
+                print('total length of commands must be less than 512 bytes')
+            else:
+                return commands
 
     def get_source(prompt):
         url = input(prompt)
         while True:
             try:
+                if len(url) >= 256:
+                    raise ValueError(f'length of url {url} exceeds maximum '
+                                     'of 255 characters')
+
                 with requests.get(url) as res:
                     res.raise_for_status()
                     return {
@@ -90,7 +98,7 @@ def define():
                 case 3: release = get_date('3. Release Date ')
                 case 4: source  = get_source('4. Source URL   ')
                 case 5: install = get_commands('5. Installation ')
-            raise ValueError()
+                case _: raise ValueError()
         except ValueError as e:
             edit = input('Anything to edit? [1-5] ')
 
@@ -107,7 +115,7 @@ def define():
         'version': version,
         'release': int(release),
         'source': source,
-        'install': ' && '.join(install)
+        'install': install
     }, indent = 4))
     print(f'Recipe written to {output}')
 
@@ -131,30 +139,31 @@ def compile():
         key = lambda r: r['release'],
         reverse = True
     )
-
-    def encode(s):
-        b = s.encode('ascii') + b'\0'
-        padding = (int(ceil(len(b) / 8) * 8) - len(b)) * b'\0'
-        return b + padding
     
-    db = encode('JPW') # magic
-    db += pack('<Q', len(packages)) # package count
-
+    recipes = []
     for package in packages:
-        db += encode(package) # package name
-        db += pack('<Q', len(packages[package])) # recipe count
+        recipes.extend(packages[package])
+    
+    def encode(s, max):
+        b = s.encode('ascii') + b'\0'
+        return b + (b'\0' * (max - len(b)))
+    
+    db = encode('JPW', 8)
+    db += pack('<Q', len(recipes))
 
-        for recipe in packages[package]:
-            db += encode(recipe['version'])
-            db += pack('<Q', int(recipe['release']))
-            db += encode(recipe['source']['url'])
-            db += encode(recipe['source']['sha256'])
-            db += pack('<Q', recipe['source']['size'])
-            db += encode(recipe['install'])
+    for recipe in recipes:
+        db += encode(recipe['package'], 32)
+        db += encode(recipe['version'], 32)
+        db += pack('<Q', int(recipe['release']))
+        db += encode(recipe['source']['url'], 256)
+        db += encode(recipe['source']['sha256'], 72)
+        db += pack('<Q', recipe['source']['size'])
+        db += encode(recipe['install'], 512)
 
     output = Path('recipes.jpw')
     if output.exists():
-        replace = input(f'Output path {output} exists, do you want to continue and overwrite? (any input is no) ')
+        replace = input(f'Output path {output} exists, do you want to '
+                        'continue and overwrite? (any input is no) ')
         if len(replace):
             print('Not overwriting... exiting now')
             exit(0)
