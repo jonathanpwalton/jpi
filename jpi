@@ -27,7 +27,7 @@ def define():
         err('this command takes no arguments')
 
     def get_name(prompt):
-        f = r'[a-zA-Z0-9_\.][a-zA-Z0-9_\.-]{0,30}'
+        f = r'[a-zA-Z0-9_\.][a-zA-Z0-9_\.-]*'
         n = input(prompt)
         while not re.fullmatch(f, n):
             print(f'name {repr(n)} does not match format {repr(f)}, try again')
@@ -54,19 +54,12 @@ def define():
                 if not len(command):
                     break
                 commands += ' && ' + command if len(commands) else command
-            if len(commands) >= 512:
-                print('total length of commands must be less than 512 bytes')
-            else:
-                return commands
+            return commands
 
     def get_source(prompt):
         url = input(prompt)
         while True:
             try:
-                if len(url) >= 256:
-                    raise ValueError(f'length of url {url} exceeds maximum '
-                                     'of 255 characters')
-
                 with requests.get(url) as res:
                     res.raise_for_status()
                     return {
@@ -144,21 +137,22 @@ def compile():
     for package in packages:
         recipes.extend(packages[package])
     
-    def encode(s, max):
+    def encode(s):
         b = s.encode('ascii') + b'\0'
-        return b + (b'\0' * (max - len(b)))
+        while len(b) / 8 != int(len(b) / 8): b += b'\0'
+        return b
     
-    db = encode('JPW', 8)
+    db = b'JPW\0\0\0\0\0'
     db += pack('<Q', len(recipes))
 
     for recipe in recipes:
-        db += encode(recipe['package'], 32)
-        db += encode(recipe['version'], 32)
+        db += encode(recipe['package'])
+        db += encode(recipe['version'])
         db += pack('<Q', int(recipe['release']))
-        db += encode(recipe['source']['url'], 256)
-        db += encode(recipe['source']['sha256'], 72)
+        db += encode(recipe['source']['url'])
+        db += encode(recipe['source']['sha256'])
         db += pack('<Q', recipe['source']['size'])
-        db += encode(recipe['install'], 512)
+        db += encode(recipe['install'])
 
     output = Path('recipes.jpw')
     if output.exists():
