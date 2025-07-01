@@ -139,20 +139,20 @@ def compile():
     
     def encode(s):
         b = s.encode('ascii') + b'\0'
-        while len(b) / 8 != int(len(b) / 8): b += b'\0'
         return b
     
     db = b'JPW\0\0\0\0\0'
     db += pack('<Q', len(recipes))
 
     for recipe in recipes:
+        db += pack('<Q', int(recipe['release']))
+        db += pack('<Q', recipe['source']['size'])
         db += encode(recipe['package'])
         db += encode(recipe['version'])
-        db += pack('<Q', int(recipe['release']))
         db += encode(recipe['source']['url'])
         db += encode(recipe['source']['sha256'])
-        db += pack('<Q', recipe['source']['size'])
         db += encode(recipe['install'])
+        while len(db) / 8 != int(len(db) / 8): db += b'\0'
 
     output = Path('recipes.jpw')
     if output.exists():
