@@ -101,14 +101,15 @@ def define():
         if len(replace):
             print('Not overwriting... exiting now')
             exit(0)
-        shutil.rmtree(output)
+        shutil.rmtree(output) if output.is_dir() else output.unlink()
     
     open(output, "w").write(json.dumps({
         'package': package,
         'version': version,
         'release': int(release),
         'source': source,
-        'install': install
+        'install': install,
+        'dependencies': [],
     }, indent = 4))
     print(f'Recipe written to {output}')
 
@@ -147,11 +148,13 @@ def compile():
     for recipe in recipes:
         db += pack('<Q', int(recipe['release']))
         db += pack('<Q', recipe['source']['size'])
+        db += pack('<Q', len(recipe['dependencies']))
         db += encode(recipe['package'])
         db += encode(recipe['version'])
         db += encode(recipe['source']['url'])
         db += encode(recipe['source']['sha256'])
         db += encode(recipe['install'])
+        for dep in recipe['dependencies']: raise NotImplementedError()
         while len(db) / 8 != int(len(db) / 8): db += b'\0'
 
     output = Path('recipes.jpw')
